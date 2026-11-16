@@ -4,6 +4,8 @@ Este módulo contém trechos FRÁGEIS DE PROPÓSITO, para servir de alvo
 para o agente de IA no pipeline. Eles estão marcados com "FRÁGIL".
 """
 
+import re
+
 from app import repository
 from app.models import Order, OrderIn, OrderItem, OrderStatus
 
@@ -15,13 +17,17 @@ class OrderError(Exception):
         self.status_code = status_code
 
 
+MAX_DISCOUNT_RATE = 0.5
+
+
 def coupon_discount_rate(coupon: str | None) -> float:
-    """Cupons no formato PROMO<NN>, ex.: PROMO10 = 10% de desconto."""
+    """Cupons no formato PROMO<NN>, ex.: PROMO10 = 10% de desconto, limitado a 50%."""
     if not coupon:
         return 0.0
-    # FRÁGIL: assume que os dois últimos caracteres são dígitos e não limita o
-    # percentual. "PROMOXX" levanta ValueError (vira HTTP 500) e "PROMO99" é aceito.
-    return int(coupon[-2:]) / 100
+    match = re.fullmatch(r"PROMO(\d{2})", coupon.strip().upper())
+    if match is None:
+        raise OrderError(f"Cupom inválido: {coupon}")
+    return min(int(match.group(1)), MAX_DISCOUNT_RATE) / 100
 
 
 def create_order(data: OrderIn) -> Order:

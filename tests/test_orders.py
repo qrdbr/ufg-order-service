@@ -48,6 +48,15 @@ def test_create_order_with_coupon():
     assert body["total"] == 629.82
 
 
+def test_invalid_coupon_is_rejected():
+    assert make_order(coupon="PROMOXX").status_code == 400
+
+
+def test_coupon_discount_is_capped():
+    body = make_order(coupon="PROMO90").json()
+    assert body["discount"] == 349.90
+
+
 def test_create_order_without_items_fails():
     assert make_order(items=[]).status_code == 400
 
