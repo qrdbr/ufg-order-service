@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# "shell: bash" explícito faz o Actions usar -o pipefail. Sem isso, o "| tee"
+# esconde o código de saída do pytest/ruff e o step passa mesmo com falha.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

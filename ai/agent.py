@@ -159,8 +159,10 @@ def main() -> int:
         body = ask_claude(task, context)
     except (anthropic.APIError, RuntimeError) as exc:
         # A falha do agente não deve derrubar o pipeline; o PR recebe um aviso.
-        print(f"Falha ao consultar o modelo: {exc}", file=sys.stderr)
-        body = f"Não foi possível gerar a análise automática: `{type(exc).__name__}`."
+        print(f"::warning::Falha ao consultar o modelo: {type(exc).__name__}: {exc}")
+        body = f"Não foi possível gerar a análise automática.\n\n```\n{type(exc).__name__}: {exc}\n```"
+        if isinstance(exc, anthropic.AuthenticationError):
+            body += "\nVerifique o secret `ANTHROPIC_API_KEY` em *Settings → Secrets and variables → Actions*."
 
     Path(args.output).write_text(f"{title}\n\n{body}{footer()}\n", encoding="utf-8")
     return 0
