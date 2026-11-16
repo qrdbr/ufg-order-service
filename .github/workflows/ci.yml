@@ -1,0 +1,130 @@
+# Estágios 1, 2 e 3: push/PR -> build e testes -> intervenção da GenAI no Pull Request.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build e testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements-dev.txt 2>&1 | tee -a ci-output.log
+
+      - name: Lint (ruff)
+        run: ruff check . 2>&1 | tee -a ci-output.log
+
+      - name: Testes unitários (pytest)
+        run: pytest -v --junitxml=junit.xml 2>&1 | tee -a ci-output.log
+
+      - name: Build da imagem Docker
+        run: docker build -t orderservice:ci . 2>&1 | tee -a ci-output.log
+
+      # O log completo vai como artefato para o job de diagnóstico ler em caso de falha.
+      - name: Publicar log do CI
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-output
+          path: |
+            ci-output.log
+            junit.xml
+          if-no-files-found: ignore
+
+  ai-summary:
+    name: GenAI - resumo das mudanças
+    needs: test
+    # PRs vindos de forks não recebem secrets, então o agente só roda para branches do próprio repositório.
+    if: >-
+      success() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r ai/requirements.txt
+
+      - name: Extrair diff do PR
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+
+      - name: Gerar resumo com o agente
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python ai/agent.py summarize --diff pr.diff --output ai-comment.md
+
+      - name: Comentar no Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file ai-comment.md
+
+  ai-diagnose:
+    name: GenAI - diagnóstico da falha
+    needs: test
+    if: >-
+      failure() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r ai/requirements.txt
+
+      - name: Baixar log do job que falhou
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ci-output
+
+      - name: Extrair diff do PR
+        run: |
+          touch ci-output.log
+          git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+
+      - name: Diagnosticar com o agente
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python ai/agent.py diagnose --diff pr.diff --log ci-output.log --output ai-comment.md
+
+      - name: Comentar no Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file ai-comment.md

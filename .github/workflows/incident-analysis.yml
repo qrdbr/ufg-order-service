@@ -1,0 +1,54 @@
+# Estágio 5: a ferramenta de observabilidade detecta uma anomalia e o relay chama
+# POST /repos/{owner}/{repo}/dispatches com event_type "anomaly-detected".
+# A GenAI analisa a causa raiz e abre uma Issue com o resultado.
+name: Análise de incidente
+
+on:
+  repository_dispatch:
+    types: [anomaly-detected]
+  workflow_dispatch:
+    inputs:
+      payload:
+        description: JSON do alerta (para testar manualmente)
+        required: true
+        default: '{"alertname": "OrderServiceHighErrorRate", "severity": "critical", "summary": "Teste manual"}'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r ai/requirements.txt
+
+      - name: Coletar alerta e commits recentes
+        env:
+          PAYLOAD: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload) || inputs.payload }}
+        run: |
+          printf '%s' "$PAYLOAD" > alert.json
+          git log -n 5 -p --stat > commits.txt
+
+      - name: Analisar causa raiz com o agente
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python ai/agent.py incident --payload alert.json --commits commits.txt --output ai-comment.md
+
+      - name: Abrir Issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          alert="$(jq -r '.alertname // "Anomalia em produção"' alert.json)"
+          gh label create incident --color B60205 --description "Anomalia detectada em produção" --force
+          gh issue create --title "🚨 ${alert}" --body-file ai-comment.md --label incident

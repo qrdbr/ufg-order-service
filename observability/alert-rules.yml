@@ -1,0 +1,24 @@
+groups:
+  - name: orderservice
+    rules:
+      - alert: OrderServiceHighErrorRate
+        expr: |
+          sum(rate(orderservice_http_requests_total{status=~"5.."}[2m]))
+            / sum(rate(orderservice_http_requests_total[2m])) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Mais de 5% das requisições do OrderService estão retornando erro 5xx
+          description: "Taxa de erro 5xx atual: {{ $value | humanizePercentage }}"
+
+      - alert: OrderServiceHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(orderservice_http_request_duration_seconds_bucket[5m]))) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Latência p95 do OrderService acima de 500 ms
+          description: "p95 atual: {{ $value | humanizeDuration }}"

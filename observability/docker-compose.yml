@@ -1,0 +1,61 @@
+# Ambiente de produção com observabilidade:
+#   orderservice -> métricas (Prometheus) e logs JSON (Alloy -> Loki)
+#   Prometheus avalia as regras -> Alertmanager -> relay -> GitHub repository_dispatch
+#
+# Uso: GITHUB_REPOSITORY=dono/repo GITHUB_TOKEN=... docker compose up -d
+services:
+  orderservice:
+    image: ${ORDERSERVICE_IMAGE:-orderservice:local}
+    build: ..
+    ports:
+      - "8000:8000"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    ports:
+      - "9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command: run /etc/alloy/config.alloy
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    ports:
+      - "3000:3000"
+
+  relay:
+    build: ./relay
+    environment:
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:?defina GITHUB_REPOSITORY=dono/repo}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?defina um token com permissão de escrita em Contents}
+      PROMETHEUS_URL: http://prometheus:9090
+      LOKI_URL: http://loki:3100
+    ports:
+      - "8080:8080"

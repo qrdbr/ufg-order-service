@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+junit.xml
+ci-output.log
+*.diff
+ai-comment.md

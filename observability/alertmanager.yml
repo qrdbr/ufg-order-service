@@ -1,0 +1,12 @@
+route:
+  receiver: genai-relay
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: genai-relay
+    webhook_configs:
+      - url: http://relay:8080/alertmanager
+        send_resolved: false
